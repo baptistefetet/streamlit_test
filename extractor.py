@@ -1,33 +1,28 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-import os
-import re
-import csv
-import logging
+import os, re, csv, logging
 from pypdf import PdfReader
 from pdf2image import convert_from_path
 import pytesseract
 from PIL import Image
 
-# Configuration ---------------------------------------------------------------
-PDF_FOLDER = "sample_docs"          # dossier contenant les formulaires
-CSV_OUTPUT = "adherents.csv" # fichier de sortie
-# Chemin Tesseract pour Windows (modifiez si besoin)
+# --------------------------------------------------------------------------- #
+# Configuration
+# --------------------------------------------------------------------------- #
+PDF_FOLDER  = "test/pdfs"
+CSV_OUTPUT  = "test/adherents.csv"
+
+POPPLER_PATH  = r"C:\poppler\Library\bin"
 TESSERACT_CMD = r"C:\\Program Files\\Tesseract-OCR\\tesseract.exe"
 pytesseract.pytesseract.tesseract_cmd = TESSERACT_CMD
 
-HEADERS = [
-	"Nom","Prenom","DateNaissance","Adresse","CodePostal","Ville",
-	"Telephone","Email","StatutAdhesion","Categorie","TypeAdhesion",
-	"BadgeCaution","CleCaution","MontantLicence","MontantCotisation",
-	"Total","DateInscription","NomResponsableLegal","TelResponsableLegal",
-	"EmailResponsableLegal","AutresRemarques","SourcePDF"
-]
+HEADERS = ["NOM", "PRÉNOM", "NOUVEAU", "TEL", "MAIL"]
 
-# -----------------------------------------------------------------------------	
+# --------------------------------------------------------------------------- #
+# PDF helpers
+# --------------------------------------------------------------------------- #
 def extract_with_acroform(pdf_path):
-	"""Try to read AcroForm fields directly."""
 	try:
 		reader = PdfReader(pdf_path)
 		form = reader.get_fields()
@@ -38,48 +33,49 @@ def extract_with_acroform(pdf_path):
 		logging.debug(f"AcroForm extraction failed on {pdf_path}: {e}")
 		return None
 
+
 def pdf_to_text(pdf_path):
-	"""Convert pages to images then run OCR."""
-	images = convert_from_path(pdf_path, dpi=300)
+	images = convert_from_path(pdf_path, dpi=300, poppler_path=POPPLER_PATH)
 	return "\n".join(pytesseract.image_to_string(img, lang="fra") for img in images)
 
+# --------------------------------------------------------------------------- #
+# OCR parsing
+# --------------------------------------------------------------------------- #
 def parse_text(text):
-	"""Extract key/value pairs from plain text using regex."""
+	"""Extract required fields out of raw OCR text."""
+	# Normalise exotic whitespaces
+	text = re.sub(r"[\u00A0\u2007\u202F]", " ", text)
+	text = re.sub(r"[ \t]{2,}", " ", text)
+	text = re.sub(r"\s+\n\s+", "\n", text)
+
 	data = {}
-	def grab(label, pattern):
-		m = re.search(pattern, text, re.IGNORECASE)
-		data[label] = m.group(1).strip() if m else ""
 
-	grab("Nom", r"Nom\s*:\s*([^\n]+)")
-	grab("Prenom", r"Pr[ée]nom\s*:\s*([^\n]+)")
-	grab("DateNaissance", r"Date\s+de\s+naissance\s*:\s*([^\n]+)")
-	grab("Adresse", r"Adresse\s*:\s*([^\n]+)")
-	grab("CodePostal", r"Code\s*Postal\s*:\s*([0-9]{4,5})")
-	grab("Ville", r"Ville\s*:\s*([^\n]+)")
-	grab("Telephone", r"T[ée]l[ée]phone\s*:\s*([^\n]+)")
-	grab("Email", r"Email\s*:\s*([^\n]+)")
+	def grab(label, pattern, post=lambda v: v):
+		m = re.search(pattern, text, re.IGNORECASE | re.UNICODE | re.DOTALL)
+		data[label] = post(m.group(1).strip()) if m else ""
 
-	# Check-boxes (simple heuristiques, ajustez si besoin)
-	data["StatutAdhesion"] = "Nouvel" if re.search(r"Nouvel\s+adh[ée]rent.*?[xX✓✔☑]", text, re.IGNORECASE) else "Renouvellement"
-	if re.search(r"Adulte.*?[xX✓✔☑]", text, re.IGNORECASE):
-		data["Categorie"] = "Adulte"
-	elif re.search(r"Enfant.*?[xX✓✔☑]", text, re.IGNORECASE):
-		data["Categorie"] = "Enfant"
-	else:
-		data["Categorie"] = "Ecole"
+	# Names
+	grab("NOM",    r"Nom\s*:\s*([^\n]+?)(?:\s+Pr[ée]nom|$)")
+	grab("PRÉNOM", r"Pr[ée]nom\s*:\s*([^\n]+)")
 
-	data["BadgeCaution"] = "Oui" if re.search(r"Caution\s+pour\s+badge.*?[xX✓✔☑]", text, re.IGNORECASE) else "Non"
-	data["CleCaution"]  = "Oui" if re.search(r"Caution\s+pour\s+cl[ée].*?[xX✓✔☑]", text, re.IGNORECASE)  else "Non"
+	# Checkbox Nouvel adhérent
+	cb = r"[xX✓✔☑☒✗✘❌■]"
+	pat_cb = rf"(?:{cb}\s*Nouvel\s+adh[ée]rent)|(?:Nouvel\s+adh[ée]rent[^\n]{{0,30}}{cb})"
+	data["NOUVEAU"] = "N" if re.search(pat_cb, text, re.IGNORECASE) else "R"
 
-	grab("Total", r"TOTAL\s*-\s*([^\n]+)")
-	grab("DateInscription", r"Date\s+d['’]inscription\s*:\s*([^\n]+)")
-	grab("NomResponsableLegal",  r"Nom\s+du\s+responsable\s+l[ée]gal\s*:\s*([^\n]+)")
-	grab("TelResponsableLegal",  r"T[ée]l[ée]phone\s+du\s+responsable\s+l[ée]gal\s*:\s*([^\n]+)")
-	grab("EmailResponsableLegal",r"Email\s+du\s+responsable\s+l[ée]gal\s*:\s*([^\n]+)")
-	grab("AutresRemarques",      r"Autres\s+remarques\s*:\s*([^\n]+)")
+	# Phone
+	grab("TEL",
+	     r"T[ée]l[ée]phone\s*:\s*([0-9 \.\-\(\)]{7,})",
+	     lambda v: re.sub(r"\D", "", v))
+
+	# E-mail
+	grab("MAIL", r"[Ee]mail\s*:\s*([^\s\n]+)")
 
 	return data
 
+# --------------------------------------------------------------------------- #
+# Orchestration
+# --------------------------------------------------------------------------- #
 def extract_pdf(pdf_path):
 	data = {h: "" for h in HEADERS}
 	acro = extract_with_acroform(pdf_path)
@@ -90,8 +86,8 @@ def extract_pdf(pdf_path):
 	else:
 		text = pdf_to_text(pdf_path)
 		data.update(parse_text(text))
-	data["SourcePDF"] = os.path.basename(pdf_path)
 	return data
+
 
 def process_folder(folder, csv_out):
 	logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
@@ -99,15 +95,17 @@ def process_folder(folder, csv_out):
 	if not pdfs:
 		logging.warning("No PDF files found in %s", folder)
 		return
-	write_header = not os.path.isfile(csv_out)
-	with open(csv_out, "a", newline="", encoding="utf-8") as fh:
+
+	with open(csv_out, "w", newline="", encoding="utf-8") as fh:
 		writer = csv.DictWriter(fh, fieldnames=HEADERS)
-		if write_header:
-			writer.writeheader()
+		writer.writeheader()
 		for pdf in pdfs:
 			logging.info("Processing %s", pdf)
 			row = extract_pdf(os.path.join(folder, pdf))
 			writer.writerow(row)
 
+# --------------------------------------------------------------------------- #
+# Entrypoint
+# --------------------------------------------------------------------------- #
 if __name__ == "__main__":
 	process_folder(PDF_FOLDER, CSV_OUTPUT)
