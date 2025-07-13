@@ -1,11 +1,7 @@
 import streamlit as st
 import pandas as pd
 import tempfile
-import os
-import json
-import importlib
-import re
-import extractor
+import os, json, importlib, re, extractor
 
 CONFIG_PATH = os.path.join(os.path.dirname(__file__), "config.json")
 UPLOADER_KEY = "pdfs"	# key for the file_uploader
@@ -26,16 +22,20 @@ def load_config():
 		return []
 
 def save_config(cfg):
-	"""Persist the config if allowed; otherwise keep it in session_state."""
+	"""Persist on Windows; keep in memory elsewhere; sync extractor."""
 	if os.name == "nt":
 		with open(CONFIG_PATH, "w", encoding="utf-8") as fh:
 			json.dump(cfg, fh, indent=2, ensure_ascii=False)
 	else:
-		# In-memory only
 		st.session_state["config"] = cfg
+
+	# 🔑 Sync for extractor
+	extractor.CONFIG = cfg			# extractor must read this variable
 
 
 cfg = load_config()
+# First sync so extractor knows the initial config even in read-only mode
+extractor.CONFIG = cfg
 
 
 # ───────────────────────────────
@@ -46,7 +46,6 @@ with st.sidebar.expander("Configuration des champs"):
 	for f in cfg:
 		st.write(f"- {f['name']} ({f['type']})")
 
-	# Delete an existing field
 	if cfg:
 		field_names = [f["name"] for f in cfg]
 		field_to_delete = st.selectbox("Supprimer un champ", [""] + field_names)
@@ -56,7 +55,6 @@ with st.sidebar.expander("Configuration des champs"):
 			importlib.reload(extractor)
 			st.rerun()
 
-	# Add a new field
 	with st.form("add_field"):
 		st.subheader("Ajouter un champ")
 		new_name = st.text_input("Nom du champ")
@@ -92,24 +90,22 @@ uploaded_files = st.file_uploader(
 	key=UPLOADER_KEY,
 )
 
-import_clicked = st.button("Importer")	# separate widget ⇒ safe to reset uploader
+import_clicked = st.button("Importer")	# separate widget
 
 if import_clicked and uploaded_files:
 	data = []
 	with st.spinner("Extraction en cours…"):
 		for up in uploaded_files:
-			# Copy the uploaded PDF to a temp file on disk
 			with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
 				tmp.write(up.read())
 				tmp.flush()
 				tmp_path = tmp.name
 			try:
-				# extractor.extract_pdf expects a file path
+				# now extractor uses the in-memory config
 				data.append(extractor.extract_pdf(tmp_path))
 			finally:
 				os.remove(tmp_path)
 
-	# Convert to DataFrame and persist to CSV (overwrite)
 	df = pd.DataFrame(data)
 	csv_path = os.path.join(os.path.dirname(__file__), "adherents.csv")
 	df.to_csv(csv_path, index=False, encoding="utf-8")
@@ -117,7 +113,6 @@ if import_clicked and uploaded_files:
 	st.success(f"{len(df)} adhésion(s) importée(s) !")
 	st.dataframe(df)
 
-	# Offer a CSV to download (in-memory, regenerated each run)
 	csv_bytes = df.to_csv(index=False).encode("utf-8")
 	st.download_button(
 		label="📥 Télécharger le CSV",
@@ -126,7 +121,4 @@ if import_clicked and uploaded_files:
 		mime="text/csv",
 	)
 
-	# ───────────────────────────────
-	# Reset the uploader so the next Browse starts clean
-	# ───────────────────────────────
-	del st.session_state[UPLOADER_KEY]		# or st.session_state.pop(UPLOADER_KEY, None)
+	del st.session_state[UPLOADER_KEY]	# reset uploader
