@@ -1,0 +1,34 @@
+[
+  {
+    "name": "NOM",
+    "type": "text",
+    "pattern": "Nom\\s*:\\s*([^\\n]+?)(?:\\s+Pr[ée]nom|$)",
+    "acro_key": "nom"
+  },
+  {
+    "name": "PRÉNOM",
+    "type": "text",
+    "pattern": "Pr[ée]nom\\s*:\\s*([^\\n]+)",
+    "acro_key": "prénom"
+  },
+  {
+    "name": "NOUVEAU",
+    "type": "checkbox",
+    "pattern": "(?:[xX✓✔☑☒✗✘❌■]\\s*Nouvel\\s+adh[ée]rent)|(?:Nouvel\\s+adh[ée]rent[^\\n]{0,30}[xX✓✔☑☒✗✘❌■])",
+    "checked_value": "N",
+    "unchecked_value": "R",
+    "acro_key": "nouveau"
+  },
+  {
+    "name": "TEL",
+    "type": "number",
+    "pattern": "T[ée]l[ée]phone\\s*:\\s*([0-9 \\.\\-\\(\\)]{7,})",
+    "acro_key": "tel"
+  },
+  {
+    "name": "MAIL",
+    "type": "text",
+    "pattern": "[Ee]mail\\s*:\\s*([^\\s\\n]+)",
+    "acro_key": "mail"
+  }
+]

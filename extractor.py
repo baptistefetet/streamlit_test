@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-import os, re, csv, logging
+import os, re, csv, logging, json
 import sys
 from pypdf import PdfReader
 from pdf2image import convert_from_path
@@ -24,7 +24,12 @@ else:  # Linux (e.g. Streamlit Cloud)
 
 pytesseract.pytesseract.tesseract_cmd = TESSERACT_CMD
 
-HEADERS = ["NOM", "PRÉNOM", "NOUVEAU", "TEL", "MAIL"]
+# Load field extraction rules from JSON configuration
+CONFIG_PATH = os.path.join(os.path.dirname(__file__), "config.json")
+with open(CONFIG_PATH, "r", encoding="utf-8") as fh:
+    FIELDS = json.load(fh)
+
+HEADERS = [f["name"] for f in FIELDS]
 
 # --------------------------------------------------------------------------- #
 # PDF helpers
@@ -53,51 +58,52 @@ def pdf_to_text(pdf_path):
 # OCR parsing
 # --------------------------------------------------------------------------- #
 def parse_text(text):
-	"""Extract required fields out of raw OCR text."""
-	# Normalise exotic whitespaces
-	text = re.sub(r"[\u00A0\u2007\u202F]", " ", text)
-	text = re.sub(r"[ \t]{2,}", " ", text)
-	text = re.sub(r"\s+\n\s+", "\n", text)
+    """Extract required fields out of raw OCR text using JSON rules."""
 
-	data = {}
+    # Normalise exotic whitespaces
+    text = re.sub(r"[\u00A0\u2007\u202F]", " ", text)
+    text = re.sub(r"[ \t]{2,}", " ", text)
+    text = re.sub(r"\s+\n\s+", "\n", text)
 
-	def grab(label, pattern, post=lambda v: v):
-		m = re.search(pattern, text, re.IGNORECASE | re.UNICODE | re.DOTALL)
-		data[label] = post(m.group(1).strip()) if m else ""
+    data = {}
 
-	# Names
-	grab("NOM",    r"Nom\s*:\s*([^\n]+?)(?:\s+Pr[ée]nom|$)")
-	grab("PRÉNOM", r"Pr[ée]nom\s*:\s*([^\n]+)")
+    for field in FIELDS:
+        name = field["name"]
+        pattern = field.get("pattern")
+        ftype = field.get("type", "text")
 
-	# Checkbox Nouvel adhérent
-	cb = r"[xX✓✔☑☒✗✘❌■]"
-	pat_cb = rf"(?:{cb}\s*Nouvel\s+adh[ée]rent)|(?:Nouvel\s+adh[ée]rent[^\n]{{0,30}}{cb})"
-	data["NOUVEAU"] = "N" if re.search(pat_cb, text, re.IGNORECASE) else "R"
+        if not pattern:
+            # generic pattern "Label: value" if no explicit regex provided
+            pattern = rf"{re.escape(name)}\s*:\s*(.+)"
 
-	# Phone
-	grab("TEL",
-	     r"T[ée]l[ée]phone\s*:\s*([0-9 \.\-\(\)]{7,})",
-	     lambda v: re.sub(r"\D", "", v))
+        m = re.search(pattern, text, re.IGNORECASE | re.UNICODE | re.DOTALL)
 
-	# E-mail
-	grab("MAIL", r"[Ee]mail\s*:\s*([^\s\n]+)")
+        if ftype == "checkbox":
+            checked = bool(m)
+            data[name] = field.get("checked_value", "1") if checked else field.get("unchecked_value", "0")
+        else:
+            value = m.group(1).strip() if m else ""
+            if ftype == "number":
+                value = re.sub(r"\D", "", value)
+            data[name] = value
 
-	return data
+    return data
 
 # --------------------------------------------------------------------------- #
 # Orchestration
 # --------------------------------------------------------------------------- #
 def extract_pdf(pdf_path):
-	data = {h: "" for h in HEADERS}
-	acro = extract_with_acroform(pdf_path)
-	if acro:
-		for h in HEADERS:
-			if h.lower() in acro:
-				data[h] = acro[h.lower()]
-	else:
-		text = pdf_to_text(pdf_path)
-		data.update(parse_text(text))
-	return data
+    data = {h: "" for h in HEADERS}
+    acro = extract_with_acroform(pdf_path)
+    if acro:
+        for field in FIELDS:
+            key = field.get("acro_key", field["name"]).lower()
+            if key in acro:
+                data[field["name"]] = acro[key]
+    else:
+        text = pdf_to_text(pdf_path)
+        data.update(parse_text(text))
+    return data
 
 
 def process_folder(folder, csv_out):
