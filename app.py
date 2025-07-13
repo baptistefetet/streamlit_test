@@ -9,7 +9,7 @@ import tempfile, os, json, importlib, re, extractor
 
 CONFIG_PATH	= os.path.join(os.path.dirname(__file__), "config.json")
 UPLOADER_KEY	= "pdfs"			# key for file_uploader ↻ reset
-CSV_OUTPUT		= os.path.join(os.path.dirname(__file__), "adherents.csv")
+CSV_OUTPUT		= os.path.join(os.path.dirname(__file__), "test/adherents.csv")
 
 # ───────────────────────────────────────────────
 #  Configuration helpers
