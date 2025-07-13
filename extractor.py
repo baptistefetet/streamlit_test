@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 
 import os, re, csv, logging
+import sys
 from pypdf import PdfReader
 from pdf2image import convert_from_path
 import pytesseract
@@ -13,8 +14,14 @@ from PIL import Image
 PDF_FOLDER  = "test/pdfs"
 CSV_OUTPUT  = "test/adherents.csv"
 
-POPPLER_PATH  = r"C:\poppler\Library\bin"
-TESSERACT_CMD = r"C:\\Program Files\\Tesseract-OCR\\tesseract.exe"
+# Detect OS and set Poppler/Tesseract paths accordingly
+if os.name == "nt":  # Windows
+    POPPLER_PATH  = r"C:\poppler\Library\bin"
+    TESSERACT_CMD = r"C:\\Program Files\\Tesseract-OCR\\tesseract.exe"
+else:  # Linux (e.g. Streamlit Cloud)
+    POPPLER_PATH  = None  # Assume poppler is in PATH
+    TESSERACT_CMD = "tesseract"  # Assume tesseract is in PATH
+
 pytesseract.pytesseract.tesseract_cmd = TESSERACT_CMD
 
 HEADERS = ["NOM", "PRÉNOM", "NOUVEAU", "TEL", "MAIL"]
@@ -35,8 +42,12 @@ def extract_with_acroform(pdf_path):
 
 
 def pdf_to_text(pdf_path):
-	images = convert_from_path(pdf_path, dpi=300, poppler_path=POPPLER_PATH)
-	return "\n".join(pytesseract.image_to_string(img, lang="fra") for img in images)
+    # Pass poppler_path only if set (Windows)
+    kwargs = {}
+    if POPPLER_PATH:
+        kwargs["poppler_path"] = POPPLER_PATH
+    images = convert_from_path(pdf_path, dpi=300, **kwargs)
+    return "\n".join(pytesseract.image_to_string(img, lang="fra") for img in images)
 
 # --------------------------------------------------------------------------- #
 # OCR parsing
